@@ -34,13 +34,6 @@
     return d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' });
   }
 
-  function themeOf(username) {
-    if (username === WAVE_USER) return { cls: 'badge-technomage', icon: TECHNOMAGE_ICON_SVG };
-    if (username === GLACIO_USER) return { cls: 'badge-glacio', icon: GLACIO_ICON_SVG };
-    if (username === MERCURY_USER) return { cls: 'badge-mercury', icon: MERCURY_ICON };
-    return null;
-  }
-
   // Цвет кружка-заглушки для пользователей без аватара (зависит от ника)
   function colorFor(username) {
     let h = 0;
@@ -50,33 +43,17 @@
     return 'hsl(' + h + ', 45%, 42%)';
   }
 
-  // Аватар приходит с сервера строкой; в CSS пускаем только обычный data:image
-  function safeAvatarCss(avatar) {
-    if (typeof avatar !== 'string') return '';
-    if (!/^data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+$/i.test(avatar)) return '';
-    return 'url("' + avatar + '")';
-  }
-
   function buildAvatar(username) {
     const wrap = document.createElement('span');
     wrap.className = 'chat-avatar-wrap';
 
     const avatar = document.createElement('span');
-    const theme = themeOf(username);
+    const badge = badgeOf(username); // плашка приходит с сервера, см. renderer.js
 
-    if (theme) {
-      avatar.className = 'chat-avatar ' + theme.cls;
-      const icon = document.createElement('span');
-      icon.className = theme.cls + '-icon';
-      if (typeof theme.icon === 'string') {
-        icon.innerHTML = theme.icon; // константа из renderer.js, не ввод пользователя
-      } else if (theme.icon && theme.icon.img) {
-        const img = document.createElement('img');
-        img.src = theme.icon.img;
-        img.alt = '';
-        icon.appendChild(img);
-      }
-      avatar.appendChild(icon);
+    if (badge) {
+      avatar.className = 'chat-avatar';
+      applyPlate(avatar, badge);
+      avatar.appendChild(createBadgeIcon(badge));
     } else {
       avatar.className = 'chat-avatar';
       const profile = profilesCache[username];
@@ -112,7 +89,7 @@
 
     const name = document.createElement('span');
     name.className = 'chat-item-name';
-    name.appendChild(createWaveName(label));
+    name.appendChild(createNameNode(label));
 
     const time = document.createElement('span');
     time.className = 'chat-item-time';

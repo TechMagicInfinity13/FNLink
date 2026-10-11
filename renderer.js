@@ -1,106 +1,198 @@
-// --- фирменные эффекты ника ---
-// У троих особых юзеров имя оформляется по-своему везде, где оно
-// показывается другим: в списке чатов, в заголовке чата, под
-// сообщениями. У всех остальных — обычный текст, без оформления.
+// --- плашки и эффекты ника ---
+// У некоторых пользователей есть плашка: иконка, цветная подложка и
+// особое оформление ника. Сами плашки (цвета, иконки) и то, у кого какая,
+// приходят с сервера (GET /api/badges и поле badge в профилях). Здесь клиент
+// знает только, как нарисовать плашку по этим данным.
+//
+// Всё, что пришло с сервера, проверяется: принимаются только цвета, числа и
+// картинки data:image. Произвольный CSS или HTML через плашку не пройдёт.
 
-const WAVE_USER = '_Defender13_';
-const WAVE_LEFT_COLOR = '#f97316'; // оранжевый
-const WAVE_RIGHT_COLOR = '#a855f7'; // фиолетовый
+let badgeDefs = new Map(); // id плашки -> проверенное определение
 
-const GLACIO_USER = 'SKOkirill201';
-const MERCURY_USER = 'CrazyPortaler';
+const BADGE_COLOR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+const BADGE_ICON_RE = /^data:image\/(?:png|webp|svg\+xml);base64,[A-Za-z0-9+/=]+$/;
+const BADGE_ID_RE = /^[a-z0-9_-]{1,32}$/;
 
-function createWaveName(username) {
-  if (username === WAVE_USER) {
+function bColor(value) {
+  return typeof value === 'string' && BADGE_COLOR_RE.test(value) ? value : null;
+}
+
+function bNum(value, min, max, fallback) {
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
+}
+
+function normalizeBadge(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const plate = raw.plate && typeof raw.plate === 'object' ? raw.plate : {};
+
+  const stops = (Array.isArray(plate.stops) ? plate.stops : [])
+    .slice(0, 6)
+    .map((s) => (Array.isArray(s) && bColor(s[0]) ? [s[0], bNum(s[1], 0, 100, 0)] : null))
+    .filter(Boolean);
+  if (stops.length < 2) return null;
+
+  const colors = (list) => (Array.isArray(list) ? list.slice(0, 2).map(bColor).filter(Boolean) : []);
+  const icon =
+    typeof raw.icon === 'string' && raw.icon.length <= 120000 && BADGE_ICON_RE.test(raw.icon)
+      ? raw.icon
+      : '';
+  const seam =
+    plate.seam && bColor(plate.seam.a) && bColor(plate.seam.b)
+      ? { a: plate.seam.a, b: plate.seam.b }
+      : null;
+
+  const n = raw.name && typeof raw.name === 'object' ? raw.name : {};
+  let name = { type: 'plain' };
+  if (n.type === 'wave' && bColor(n.left) && bColor(n.right)) {
+    name = { type: 'wave', left: n.left, right: n.right };
+  } else if (n.type === 'gradient' && bColor(n.from) && bColor(n.to)) {
+    name = { type: 'gradient', from: n.from, to: n.to };
+  }
+
+  return {
+    icon,
+    footerIconSize: bNum(raw.footerIconSize, 14, 36, 22),
+    angle: bNum(plate.angle, 0, 360, 135),
+    stops,
+    border: bColor(plate.border),
+    glow: colors(plate.glow),
+    seam,
+    iconGlow: colors(plate.iconGlow),
+    plateName: raw.plateName === 'white' ? 'white' : 'name', // имя на плашке: как обычно или белое
+    name,
+  };
+}
+
+function setBadgeDefs(rawDefs) {
+  const next = new Map();
+  if (rawDefs && typeof rawDefs === 'object') {
+    for (const id of Object.keys(rawDefs).slice(0, 50)) {
+      if (!BADGE_ID_RE.test(id)) continue;
+      const def = normalizeBadge(rawDefs[id]);
+      if (def) next.set(id, def);
+    }
+  }
+  badgeDefs = next;
+}
+
+async function loadBadges() {
+  try {
+    const data = await authFetch('/api/badges');
+    setBadgeDefs(data.defs);
+  } catch (err) {
+    console.error('Не удалось загрузить плашки', err);
+  }
+}
+
+// Плашка пользователя (по его профилю) или null, если плашки нет
+function badgeOf(username, profile) {
+  const p = profile || profilesCache[username];
+  if (!p || typeof p.badge !== 'string') return null;
+  return badgeDefs.get(p.badge) || null;
+}
+
+// Оформление плашки задаётся CSS-переменными, сами правила лежат в styles.css
+function applyPlate(el, badge) {
+  el.classList.add('bplate');
+  const stops = badge.stops.map(([c, p]) => `${c} ${p}%`).join(', ');
+  el.style.setProperty('--bp-bg', `linear-gradient(${badge.angle}deg, ${stops})`);
+
+  const shadow = [];
+  if (badge.border) shadow.push(`inset 0 0 0 1px ${badge.border}`);
+  for (const c of badge.glow) shadow.push(`0 0 10px ${c}`);
+  el.style.setProperty('--bp-shadow', shadow.length ? shadow.join(', ') : 'none');
+
+  el.style.setProperty(
+    '--bp-icon-glow',
+    badge.iconGlow.length ? badge.iconGlow.map((c) => `drop-shadow(0 0 4px ${c})`).join(' ') : 'none'
+  );
+  el.style.setProperty('--bp-footer-icon', badge.footerIconSize + 'px');
+
+  if (badge.seam) {
+    el.classList.add('has-seam');
+    el.style.setProperty(
+      '--bp-seam-bg',
+      `linear-gradient(115deg, transparent 40%, ${badge.seam.a} 48%, ${badge.seam.b} 52%, transparent 60%)`
+    );
+  }
+}
+
+function clearPlate(el) {
+  el.classList.remove('bplate', 'has-seam');
+  for (const v of ['--bp-bg', '--bp-shadow', '--bp-icon-glow', '--bp-footer-icon', '--bp-seam-bg']) {
+    el.style.removeProperty(v);
+  }
+}
+
+function createBadgeIcon(badge) {
+  const icon = document.createElement('span');
+  icon.className = 'bp-icon';
+  if (badge.icon) {
+    const img = document.createElement('img');
+    img.src = badge.icon;
+    img.alt = '';
+    icon.appendChild(img);
+  }
+  return icon;
+}
+
+// Ник с оформлением плашки. inPlate=true: ник стоит прямо на плашке (там
+// он может быть просто белым). profile нужен, если пользователя ещё нет в
+// кэше профилей (результат поиска, заявка в друзья).
+function createNameNode(username, inPlate, profile) {
+  return nameNodeFor(username, badgeOf(username, profile), inPlate);
+}
+
+function nameNodeFor(username, badge, inPlate) {
+  if (!badge || (inPlate && badge.plateName === 'white')) {
+    return document.createTextNode(username);
+  }
+  const n = badge.name;
+  if (n.type === 'wave') {
     const span = document.createElement('span');
     span.className = 'wave-name';
     span.textContent = username;
-    span.style.setProperty('--wave-left', WAVE_LEFT_COLOR);
-    span.style.setProperty('--wave-right', WAVE_RIGHT_COLOR);
+    span.style.setProperty('--wave-left', n.left);
+    span.style.setProperty('--wave-right', n.right);
     return span;
   }
-
-  if (username === GLACIO_USER) {
+  if (n.type === 'gradient') {
     const span = document.createElement('span');
-    span.className = 'glacio-name';
+    span.className = 'grad-name';
     span.textContent = username;
+    span.style.setProperty('--grad-from', n.from);
+    span.style.setProperty('--grad-to', n.to);
     return span;
   }
-
-  if (username === MERCURY_USER) {
-    const span = document.createElement('span');
-    span.className = 'mercury-name';
-    span.textContent = username;
-    return span;
-  }
-
   return document.createTextNode(username);
 }
 
-// Иконка-кристалл для карточки "Гласио" в футере сайдбара
-const GLACIO_ICON_SVG = `
-  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round">
-    <line x1="12" y1="2" x2="12" y2="22"/>
-    <line x1="4.2" y1="7" x2="19.8" y2="17"/>
-    <line x1="4.2" y1="17" x2="19.8" y2="7"/>
-    <circle cx="12" cy="12" r="2.2" fill="white" stroke="none"/>
-  </svg>
-`;
+// Ник на самой плашке
+function createPlateName(username, badge) {
+  const span = document.createElement('span');
+  span.className = 'bp-name' + (badge.plateName === 'white' ? ' is-white' : '');
+  span.appendChild(nameNodeFor(username, badge, true));
+  return span;
+}
 
-// Иконка блока магмы для карточки "Меркурий" (реальная текстура)
-const MERCURY_ICON = { img: 'assets/magma-block.png' };
+// Карточка внизу слева: у пользователя с плашкой подложка, иконка и ник,
+// у остальных просто ник.
+function renderMyFooter() {
+  meUsername.innerHTML = '';
+  clearPlate(sidebarFooter);
+  sidebarFooter.classList.remove('footer-card');
 
-// Иконка "техномаг" для карточки _Defender13_ — гаечный ключ в стиле мода
-// Create (тёмно-красная рукоять, серый механизм, золотистая ступенчатая
-// голова) и волшебная палочка (фиолетовая, со светлым наконечником),
-// скрещённые крест-накрест в пиксельном стиле.
-const TECHNOMAGE_ICON_SVG = `
-  <svg viewBox="0 0 32 32" width="30" height="30" xmlns="http://www.w3.org/2000/svg">
-    <g transform="rotate(-45 16 16)">
-      <rect x="14" y="19" width="4" height="8" fill="#7a2020" stroke="#3d0f0f" stroke-width="0.4"/>
-      <rect x="14" y="19" width="1.3" height="8" fill="#5c1414"/>
-      <rect x="12.5" y="14.5" width="7" height="4.5" fill="#8a5a2e" stroke="#4a2e15" stroke-width="0.4"/>
-      <rect x="14" y="11.5" width="4" height="3.5" fill="#6b6b6b" stroke="#333333" stroke-width="0.4"/>
-      <rect x="14" y="11.5" width="1.5" height="3.5" fill="#8c8c8c"/>
-      <rect x="11.5" y="8" width="9" height="4" fill="#b8860b" stroke="#6b4e08" stroke-width="0.4"/>
-      <rect x="10" y="3.5" width="4.5" height="5" fill="#c9971a" stroke="#6b4e08" stroke-width="0.4"/>
-      <rect x="17" y="3" width="4.5" height="5.5" fill="#d9a52a" stroke="#6b4e08" stroke-width="0.4"/>
-      <rect x="18" y="3" width="1.3" height="5.5" fill="#f0c860"/>
-    </g>
-    <g transform="rotate(45 16 16)">
-      <rect x="14.5" y="20.5" width="3" height="7" fill="#4a2a72" stroke="#2a1745" stroke-width="0.4"/>
-      <rect x="14.1" y="17" width="3.6" height="3.6" fill="#6d3fa8" stroke="#3a2266" stroke-width="0.3"/>
-      <rect x="14.9" y="13.5" width="3.6" height="3.6" fill="#8a5cc4" stroke="#4a2e80" stroke-width="0.3"/>
-      <rect x="14.4" y="10.2" width="3.4" height="3.3" fill="#a97bd6" stroke="#5c3a94" stroke-width="0.3"/>
-      <rect x="14.5" y="7" width="3.2" height="3.5" fill="#e6d9fb" stroke="#8a5cc4" stroke-width="0.3"/>
-      <path d="M16 2.2 L16.9 3.8 L18.3 4.5 L16.9 5.2 L16 6.8 L15.1 5.2 L13.7 4.5 L15.1 3.8 Z" fill="#ffffff"/>
-    </g>
-  </svg>
-`;
-
-// Применяет тематическую карточку (иконка + подсвеченное имя) в футере
-// сайдбара вместо обычного текста ника. iconContent — либо строка с
-// готовым SVG-разметкой, либо { img: 'путь/к/файлу.png' } для картинки.
-function applyFooterTheme(themeClass, iconContent, username, nameNode) {
-  sidebarFooter.classList.add(themeClass);
-
-  const icon = document.createElement('span');
-  icon.className = `${themeClass}-icon`;
-  if (typeof iconContent === 'string') {
-    icon.innerHTML = iconContent;
-  } else if (iconContent && iconContent.img) {
-    const imgEl = document.createElement('img');
-    imgEl.src = iconContent.img;
-    imgEl.alt = '';
-    icon.appendChild(imgEl);
+  const badge = badgeOf(myUsername);
+  if (badge) {
+    sidebarFooter.classList.add('footer-card');
+    applyPlate(sidebarFooter, badge);
+    meUsername.appendChild(createBadgeIcon(badge));
+    meUsername.appendChild(createPlateName(myUsername, badge));
+  } else {
+    meUsername.appendChild(document.createTextNode(myUsername));
   }
-
-  const nameSpan = document.createElement('span');
-  nameSpan.className = `${themeClass}-name`;
-  nameSpan.appendChild(nameNode || document.createTextNode(username));
-
-  meUsername.appendChild(icon);
-  meUsername.appendChild(nameSpan);
+  applyFooterAvatar();
 }
 
 // --- адрес сервера — зашит намертво, поле ввода убрали из форм.
@@ -513,10 +605,10 @@ function aboutKey(username) { return `mm_about_${username}`; }
 function getAvatar(username) { return localStorage.getItem(avatarKey(username)) || ''; }
 function getAboutMe(username) { return localStorage.getItem(aboutKey(username)) || ''; }
 
-// У троих кастомных юзеров уже есть своя иконка-тема в футере — обычный
-// аватар им не нужен, показываем кружок только для остальных.
+// У пользователей с плашкой уже есть иконка в футере — обычный аватар
+// им не нужен, показываем кружок только для остальных.
 function applyFooterAvatar() {
-  const isCustomThemed = myUsername === GLACIO_USER || myUsername === MERCURY_USER || myUsername === WAVE_USER;
+  const isCustomThemed = !!badgeOf(myUsername);
   if (isCustomThemed) {
     footerAvatar.classList.add('hidden');
     return;
@@ -852,48 +944,14 @@ function renderSearchResult(user, status) {
   const identity = document.createElement('div');
   identity.className = 'search-result-identity';
 
-  let themeClass = null;
-  let iconContent = null;
-  let plainWhiteName = false;
+  const badgeDef = badgeOf(user.username, user);
 
-  if (user.username === WAVE_USER) {
-    themeClass = 'badge-technomage';
-    iconContent = TECHNOMAGE_ICON_SVG;
-  } else if (user.username === GLACIO_USER) {
-    themeClass = 'badge-glacio';
-    iconContent = GLACIO_ICON_SVG;
-    plainWhiteName = true;
-  } else if (user.username === MERCURY_USER) {
-    themeClass = 'badge-mercury';
-    iconContent = MERCURY_ICON;
-    plainWhiteName = true;
-  }
-
-  if (themeClass) {
+  if (badgeDef) {
     const badge = document.createElement('span');
-    badge.className = `chat-item-badge ${themeClass}`;
-
-    const icon = document.createElement('span');
-    icon.className = `${themeClass}-icon`;
-    if (typeof iconContent === 'string') {
-      icon.innerHTML = iconContent;
-    } else if (iconContent && iconContent.img) {
-      const imgEl = document.createElement('img');
-      imgEl.src = iconContent.img;
-      imgEl.alt = '';
-      icon.appendChild(imgEl);
-    }
-
-    const nameSpan = document.createElement('span');
-    nameSpan.className = `${themeClass}-name`;
-    if (plainWhiteName) {
-      nameSpan.textContent = user.username;
-    } else {
-      nameSpan.appendChild(createWaveName(user.username));
-    }
-
-    badge.appendChild(icon);
-    badge.appendChild(nameSpan);
+    badge.className = 'chat-item-badge';
+    applyPlate(badge, badgeDef);
+    badge.appendChild(createBadgeIcon(badgeDef));
+    badge.appendChild(createPlateName(user.username, badgeDef));
     identity.appendChild(badge);
   } else {
     const avatar = document.createElement('span');
@@ -1045,7 +1103,7 @@ function renderFriendRequestsList(requests) {
 
     const nickLine = document.createElement('div');
     nickLine.className = 'friend-request-nick';
-    nickLine.appendChild(createWaveName(req.from.username));
+    nickLine.appendChild(createNameNode(req.from.username, false, req.from));
 
     info.appendChild(handleLine);
     info.appendChild(nickLine);
@@ -1123,34 +1181,13 @@ function renderContactPanel(username) {
 
   contactPanelAvatarWrap.innerHTML = '';
 
-  let themeClass = null;
-  let iconContent = null;
+  const badgeDef = badgeOf(username);
 
-  if (username === WAVE_USER) {
-    themeClass = 'badge-technomage';
-    iconContent = TECHNOMAGE_ICON_SVG;
-  } else if (username === GLACIO_USER) {
-    themeClass = 'badge-glacio';
-    iconContent = GLACIO_ICON_SVG;
-  } else if (username === MERCURY_USER) {
-    themeClass = 'badge-mercury';
-    iconContent = MERCURY_ICON;
-  }
-
-  if (themeClass) {
+  if (badgeDef) {
     const wrap = document.createElement('span');
-    wrap.className = `contact-panel-theme-avatar ${themeClass}`;
-    const icon = document.createElement('span');
-    icon.className = `${themeClass}-icon`;
-    if (typeof iconContent === 'string') {
-      icon.innerHTML = iconContent;
-    } else if (iconContent && iconContent.img) {
-      const imgEl = document.createElement('img');
-      imgEl.src = iconContent.img;
-      imgEl.alt = '';
-      icon.appendChild(imgEl);
-    }
-    wrap.appendChild(icon);
+    wrap.className = 'contact-panel-theme-avatar';
+    applyPlate(wrap, badgeDef);
+    wrap.appendChild(createBadgeIcon(badgeDef));
     contactPanelAvatarWrap.appendChild(wrap);
   } else {
     const avatar = document.createElement('span');
@@ -1164,7 +1201,7 @@ function renderContactPanel(username) {
   }
 
   contactPanelName.innerHTML = '';
-  contactPanelName.appendChild(createWaveName(username));
+  contactPanelName.appendChild(createNameNode(username));
 
   contactPanelHandle.textContent = profile.handle ? '@' + profile.handle : '';
 
@@ -1203,19 +1240,7 @@ contactPanelToggleBtn.addEventListener('click', () => {
 async function enterChat() {
   authScreen.classList.add('hidden');
   chatScreen.classList.remove('hidden');
-  meUsername.innerHTML = '';
-
-  if (myUsername === GLACIO_USER) {
-    applyFooterTheme('footer-glacio', GLACIO_ICON_SVG, myUsername);
-  } else if (myUsername === MERCURY_USER) {
-    applyFooterTheme('footer-mercury', MERCURY_ICON, myUsername);
-  } else if (myUsername === WAVE_USER) {
-    applyFooterTheme('footer-technomage', TECHNOMAGE_ICON_SVG, myUsername, createWaveName(myUsername));
-  } else {
-    meUsername.appendChild(createWaveName(myUsername));
-  }
-
-  applyFooterAvatar();
+  renderMyFooter();
 
   currentChat = null;
   currentChatTitle.textContent = 'Выбери чат';
@@ -1235,7 +1260,10 @@ async function enterChat() {
 
   await loadContacts();
   loadFriendRequests();
+  await loadBadges();
   await refreshProfilesCache();
+  renderMyFooter();
+  renderChatList();
   await ensureMyKeyPair();
   connectWs();
 }
@@ -1283,7 +1311,7 @@ function makeChatItem(chatId, label, showPresence) {
   btn.className = 'chat-item' + (chatId === currentChat ? ' active' : '');
   btn.dataset.chat = chatId;
 
-  const badge = showPresence ? createChatItemBadge(chatId) : null;
+  const badge = null; // плашки в списке чатов рисует chat-list.js
 
   if (badge) {
     btn.appendChild(badge);
@@ -1297,7 +1325,7 @@ function makeChatItem(chatId, label, showPresence) {
     const name = document.createElement('span');
     name.className = 'chat-item-name';
     if (showPresence) {
-      name.appendChild(createWaveName(label));
+      name.appendChild(createNameNode(label));
     } else {
       name.textContent = label;
     }
@@ -1308,63 +1336,10 @@ function makeChatItem(chatId, label, showPresence) {
   return btn;
 }
 
-// Компактный бейдж (иконка + имя) для списка чатов — мини-версия карточки
-// из футера, но не на всю строку. Возвращает null для обычных юзеров.
-// У кастомных юзеров нет кружка статуса — вместо этого их иконка тускнеет,
-// когда они не в сети.
-function createChatItemBadge(username) {
-  let themeClass = null;
-  let iconContent = null;
-  let plainWhiteName = false; // Гласио/Меркурий: имя белым, т.к. фон бейджа уже цветной
-
-  if (username === WAVE_USER) {
-    themeClass = 'badge-technomage';
-    iconContent = TECHNOMAGE_ICON_SVG;
-  } else if (username === GLACIO_USER) {
-    themeClass = 'badge-glacio';
-    iconContent = GLACIO_ICON_SVG;
-    plainWhiteName = true;
-  } else if (username === MERCURY_USER) {
-    themeClass = 'badge-mercury';
-    iconContent = MERCURY_ICON;
-    plainWhiteName = true;
-  }
-
-  if (!themeClass) return null;
-
-  const online = onlineUsers.has(username);
-
-  const badge = document.createElement('span');
-  badge.className = `chat-item-badge ${themeClass}`;
-
-  const icon = document.createElement('span');
-  icon.className = `${themeClass}-icon` + (online ? '' : ' badge-icon-offline');
-  if (typeof iconContent === 'string') {
-    icon.innerHTML = iconContent;
-  } else if (iconContent && iconContent.img) {
-    const imgEl = document.createElement('img');
-    imgEl.src = iconContent.img;
-    imgEl.alt = '';
-    icon.appendChild(imgEl);
-  }
-
-  const nameSpan = document.createElement('span');
-  nameSpan.className = `${themeClass}-name`;
-  if (plainWhiteName) {
-    nameSpan.textContent = username;
-  } else {
-    nameSpan.appendChild(createWaveName(username));
-  }
-
-  badge.appendChild(icon);
-  badge.appendChild(nameSpan);
-  return badge;
-}
-
 function switchChat(chatId, label) {
   currentChat = chatId;
   currentChatTitle.innerHTML = '';
-  currentChatTitle.appendChild(createWaveName(label));
+  currentChatTitle.appendChild(createNameNode(label));
   sendForm.classList.remove('hidden');
   renderChatList();
   renderMessages();
@@ -1414,8 +1389,22 @@ function connectWs() {
         about: data.about,
         avatar: data.avatar,
         joinedAt: data.joinedAt,
+        badge: data.badge,
       };
       if (contactPanelOpen && currentChat === data.username) renderContactPanel(currentChat);
+      return;
+    }
+
+    if (data.type === 'badges_changed') {
+      // на сервере изменили плашки: перечитываем определения и профили
+      loadBadges()
+        .then(refreshProfilesCache)
+        .then(() => {
+          renderMyFooter();
+          renderChatList();
+          renderMessages();
+          if (currentChat) updateContactPanelVisibility();
+        });
       return;
     }
 
@@ -1480,59 +1469,26 @@ async function notifyIncomingMessage(contactUsername, message) {
 function buildMessageHeader(username, ts) {
   const time = new Date(ts).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
 
-  let themeClass = null;
-  let iconContent = null;
-  let plainWhiteName = false;
+  const badgeDef = badgeOf(username);
 
-  if (username === WAVE_USER) {
-    themeClass = 'badge-technomage';
-    iconContent = TECHNOMAGE_ICON_SVG;
-  } else if (username === GLACIO_USER) {
-    themeClass = 'badge-glacio';
-    iconContent = GLACIO_ICON_SVG;
-    plainWhiteName = true;
-  } else if (username === MERCURY_USER) {
-    themeClass = 'badge-mercury';
-    iconContent = MERCURY_ICON;
-    plainWhiteName = true;
-  }
-
-  if (!themeClass) {
+  if (!badgeDef) {
     const meta = document.createElement('div');
     meta.className = 'msg-meta';
-    meta.appendChild(createWaveName(username));
+    meta.appendChild(document.createTextNode(username));
     meta.appendChild(document.createTextNode(` · ${time}`));
     return meta;
   }
 
   const strip = document.createElement('div');
-  strip.className = `msg-strip ${themeClass}`;
-
-  const icon = document.createElement('span');
-  icon.className = `${themeClass}-icon`;
-  if (typeof iconContent === 'string') {
-    icon.innerHTML = iconContent;
-  } else if (iconContent && iconContent.img) {
-    const imgEl = document.createElement('img');
-    imgEl.src = iconContent.img;
-    imgEl.alt = '';
-    icon.appendChild(imgEl);
-  }
-
-  const nameSpan = document.createElement('span');
-  nameSpan.className = `${themeClass}-name`;
-  if (plainWhiteName) {
-    nameSpan.textContent = username;
-  } else {
-    nameSpan.appendChild(createWaveName(username));
-  }
+  strip.className = 'msg-strip';
+  applyPlate(strip, badgeDef);
 
   const timeSpan = document.createElement('span');
   timeSpan.className = 'msg-strip-time';
   timeSpan.textContent = time;
 
-  strip.appendChild(icon);
-  strip.appendChild(nameSpan);
+  strip.appendChild(createBadgeIcon(badgeDef));
+  strip.appendChild(createPlateName(username, badgeDef));
   strip.appendChild(timeSpan);
   return strip;
 }

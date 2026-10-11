@@ -62,16 +62,10 @@
   color: #ffffff;
 }
 
-/* иконки трёх особых пользователей в большом кружке */
-.chat-avatar .badge-technomage-icon svg,
-.chat-avatar .badge-glacio-icon svg {
+/* иконка плашки в большом кружке */
+.chat-avatar .bp-icon img {
   width: 26px;
   height: 26px;
-}
-
-.chat-avatar .badge-mercury-icon img {
-  width: 24px;
-  height: 24px;
   border-radius: 4px;
 }
 

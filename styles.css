@@ -385,84 +385,47 @@ html, body {
   border-radius: 10px;
 }
 
-.badge-technomage-icon,
-.badge-glacio-icon,
-.badge-mercury-icon {
+/* ---------- плашки ----------
+   Определения плашек (цвета, иконки) приходят с сервера. Клиент задаёт
+   на элементе переменные --bp-*, а правила оформления одни на всех. */
+
+.bplate {
+  position: relative;
+  overflow: hidden;
+  background: var(--bp-bg);
+  box-shadow: var(--bp-shadow, none);
+}
+
+/* светящийся шов посередине плашки (если он есть у плашки) */
+.bplate.has-seam::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--bp-seam-bg);
+  filter: blur(3px);
+  pointer-events: none;
+}
+
+.bp-icon {
   position: relative;
   display: inline-flex;
   flex-shrink: 0;
 }
 
-.badge-technomage-icon svg,
-.badge-glacio-icon svg {
+.bp-icon img {
+  display: block;
   width: 16px;
   height: 16px;
-}
-
-.badge-mercury-icon img {
-  display: block;
-  width: 14px;
-  height: 14px;
   border-radius: 3px;
 }
 
-/* иконка кастомного юзера тускнеет вместо кружка статуса, когда он не в сети */
-.badge-icon-offline {
-  filter: grayscale(1) brightness(0.55) !important;
-  opacity: 0.75;
-}
-
-.badge-technomage {
-  position: relative;
-  overflow: hidden;
-  background: linear-gradient(
-    115deg,
-    #382a1c 0%,
-    #382a1c 42%,
-    #2a1f3a 58%,
-    #2a1f3a 100%
-  );
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.1),
-    0 0 10px rgba(249, 115, 22, 0.12),
-    0 0 10px rgba(168, 85, 247, 0.12);
-}
-
-/* светящийся шов на стыке двух половин — та же идея, что в футере,
-   иначе тёмный фон бейджа сливается с фоном сайдбара */
-.badge-technomage::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    115deg,
-    transparent 40%,
-    rgba(249, 115, 22, 0.6) 48%,
-    rgba(168, 85, 247, 0.6) 52%,
-    transparent 60%
-  );
-  filter: blur(3px);
-  pointer-events: none;
-}
-
-.badge-glacio {
-  background: linear-gradient(135deg, #4b3f91 0%, #7c6fd1 45%, #b9d3ec 100%);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
-}
-
-.badge-mercury {
-  background: linear-gradient(135deg, #2b0f05 0%, #b8320a 45%, #ff9a3d 100%);
-  box-shadow: inset 0 0 0 1px rgba(255, 176, 32, 0.25);
-}
-
-.badge-technomage-name {
+.bp-name {
   position: relative;
   font-size: 13px;
 }
 
-.badge-glacio-name,
-.badge-mercury-name {
-  font-size: 13px;
+/* ник прямо на плашке, когда у плашки он белый */
+.bp-name.is-white {
   font-weight: 700;
   color: #ffffff;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
@@ -722,133 +685,38 @@ html, body {
   50% { --wave-pos: 54%; }
 }
 
-/* ник SKOkirill201 везде вне своей карточки — статичный ледяной градиент,
-   в тех же тонах, что и его карточка в футере */
-.glacio-name {
+/* ник с градиентом вне плашки: цвета задаются переменными --grad-from / --grad-to */
+.grad-name {
   font-weight: 700;
-  background-image: linear-gradient(90deg, #8f82e0 0%, #b9d3ec 100%);
+  background-image: linear-gradient(90deg, var(--grad-from), var(--grad-to));
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
   -webkit-text-fill-color: transparent;
 }
 
-/* ник CrazyPortaler везде вне своей карточки — статичный лавовый градиент */
-.mercury-name {
-  font-weight: 700;
-  background-image: linear-gradient(90deg, #ff9a3d 0%, #ff5a1f 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  -webkit-text-fill-color: transparent;
-}
+/* карточка внизу слева у пользователя с плашкой: сама подложка и ник/иконка
+   внутри, цвета берутся из --bp-* (см. блок «плашки» выше) */
 
-/* карточка "Гласио" — только у SKOkirill201, вместо обычного футера */
-
-.footer-glacio {
+.footer-card {
   margin: 10px;
   padding: 10px 12px;
   border-top: none;
   border-radius: 10px;
-  background: linear-gradient(135deg, #4b3f91 0%, #7c6fd1 45%, #b9d3ec 100%);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
 }
 
-/* карточка "Меркурий" — только у CrazyPortaler, лавовая тема */
-
-.footer-mercury {
-  margin: 10px;
-  padding: 10px 12px;
-  border-top: none;
-  border-radius: 10px;
-  background: linear-gradient(135deg, #2b0f05 0%, #b8320a 45%, #ff9a3d 100%);
-  box-shadow: inset 0 0 0 1px rgba(255, 176, 32, 0.25);
-}
-
-.footer-glacio-icon,
-.footer-mercury-icon,
-.footer-technomage-icon {
-  flex-shrink: 0;
+.footer-card .bp-icon {
   margin-right: 8px;
-  display: inline-flex;
+  filter: var(--bp-icon-glow, none);
 }
 
-.footer-glacio-icon {
-  filter: drop-shadow(0 0 3px rgba(255, 255, 255, 0.55));
+.footer-card .bp-icon img {
+  width: var(--bp-footer-icon, 22px);
+  height: var(--bp-footer-icon, 22px);
 }
 
-.footer-mercury-icon {
-  filter: drop-shadow(0 0 4px rgba(255, 138, 61, 0.7));
-}
-
-.footer-mercury-icon img {
-  display: block;
-  width: 20px;
-  height: 20px;
-  border-radius: 3px;
-}
-
-.footer-glacio-name,
-.footer-mercury-name {
-  color: #ffffff;
-  font-weight: 700;
+.footer-card .bp-name {
   font-family: var(--font-sans);
-  font-size: 13px;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
-  letter-spacing: 0.2px;
-}
-
-/* карточка "Техномаг" — только у _Defender13_. В отличие от Гласио и
-   Меркурия, это не плавный градиент одного цвета, а резкий стык двух
-   тёмных полусторон (технология / магия) с оранжево-фиолетовым
-   свечением по границе — визуальный "родственник" переливающегося
-   ника, но в виде карточки. */
-
-.footer-technomage {
-  margin: 10px;
-  padding: 10px 12px;
-  border-top: none;
-  border-radius: 10px;
-  position: relative;
-  overflow: hidden;
-  background: linear-gradient(
-    115deg,
-    #241c14 0%,
-    #241c14 42%,
-    #1a1420 58%,
-    #1a1420 100%
-  );
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
-}
-
-/* светящийся шов на стыке двух половин */
-.footer-technomage::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    115deg,
-    transparent 44%,
-    rgba(249, 115, 22, 0.55) 49%,
-    rgba(168, 85, 247, 0.55) 51%,
-    transparent 56%
-  );
-  filter: blur(3px);
-  pointer-events: none;
-}
-
-.footer-technomage-icon {
-  position: relative;
-  margin-right: 16px;
-  filter: drop-shadow(0 0 4px rgba(249, 115, 22, 0.6))
-          drop-shadow(0 0 4px rgba(168, 85, 247, 0.6));
-}
-
-.footer-technomage-name {
-  position: relative;
-  font-weight: 700;
-  font-family: var(--font-sans);
-  font-size: 13px;
   letter-spacing: 0.2px;
 }
 
@@ -1228,19 +1096,9 @@ html, body {
   justify-content: center;
 }
 
-.contact-panel-theme-avatar.badge-technomage { background: linear-gradient(115deg, #382a1c 0%, #382a1c 42%, #2a1f3a 58%, #2a1f3a 100%); }
-.contact-panel-theme-avatar.badge-glacio { background: linear-gradient(135deg, #4b3f91 0%, #7c6fd1 45%, #b9d3ec 100%); }
-.contact-panel-theme-avatar.badge-mercury { background: linear-gradient(135deg, #2b0f05 0%, #b8320a 45%, #ff9a3d 100%); }
-
-.contact-panel-theme-avatar .badge-technomage-icon svg,
-.contact-panel-theme-avatar .badge-glacio-icon svg {
+.contact-panel-theme-avatar .bp-icon img {
   width: 30px;
   height: 30px;
-}
-
-.contact-panel-theme-avatar .badge-mercury-icon img {
-  width: 26px;
-  height: 26px;
   border-radius: 4px;
 }
 

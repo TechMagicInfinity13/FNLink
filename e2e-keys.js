@@ -81,11 +81,13 @@
     return { pub, priv, pair };
   }
 
-  async function publishPub(pub) {
+  // replace=true только в явных сценариях (импорт, «сделать основным», «создать новый»):
+  // сервер не даёт молча заменить ключ аккаунта.
+  async function publishPub(pub, replace) {
     await authFetch('/api/profile', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ publicKey: JSON.stringify(pub) }),
+      body: JSON.stringify({ publicKey: JSON.stringify(pub), replaceKey: !!replace }),
     });
   }
 
@@ -156,13 +158,14 @@
   // устройством; сервер видит только шифротекст.
 
   const SAS_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const SAS_LEN = 10; // длина кода (50 бит); такая же на сервере в transfer.js
 
   // Код из 6 символов; такая же функция на сервере (transfer.js)
   async function sasCode(id, nPubStr, oPubStr) {
-    const data = new TextEncoder().encode('fnlink-sas-v1|' + id + '|' + nPubStr + '|' + oPubStr);
+    const data = new TextEncoder().encode('fnlink-sas-v2|' + id + '|' + nPubStr + '|' + oPubStr);
     const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', data));
     let out = '';
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < SAS_LEN; i++) {
       let value = 0;
       for (let j = 0; j < 5; j++) {
         const bit = i * 5 + j;
@@ -468,7 +471,7 @@
           'перестанут читаться (копия прежнего ключа сохранится на устройстве). Продолжить?')) return;
       }
       storeLocal(obj.pub, obj.priv);
-      await publishPub(obj.pub);
+      await publishPub(obj.pub, true);
       location.reload();
     } catch (err) {
       setMsg(err.message);
@@ -482,7 +485,7 @@
     try {
       const local = await loadLocalPair();
       if (!local) return setMsg('На этом устройстве нет ключа');
-      await publishPub(local.pub);
+      await publishPub(local.pub, true);
       location.reload();
     } catch (err) {
       setMsg('Не удалось обновить ключ на сервере: ' + err.message);
@@ -496,7 +499,7 @@
     try {
       const fresh = await generateNewKey();
       storeLocal(fresh.pub, fresh.priv);
-      await publishPub(fresh.pub);
+      await publishPub(fresh.pub, true);
       location.reload();
     } catch (err) {
       setMsg('Не удалось создать ключ: ' + err.message);
@@ -571,7 +574,7 @@
   }
 
   function formatCode(code) {
-    return code.slice(0, 3) + '-' + code.slice(3);
+    return code.slice(0, 5) + '-' + code.slice(5);
   }
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -670,10 +673,10 @@
     return new Promise((resolve) => {
       const input = document.createElement('input');
       input.type = 'text';
-      input.maxLength = 7;
+      input.maxLength = SAS_LEN + 1;
       input.autocomplete = 'off';
       input.setAttribute('autocapitalize', 'characters');
-      input.placeholder = 'XXX-XXX';
+      input.placeholder = 'XXXXX-XXXXX';
       const errorEl = h('div', 'kt-error');
       let localFails = 0;
       let busy = false;
@@ -683,7 +686,7 @@
       const submit = async () => {
         if (busy) return;
         const typed = normalizeCode(input.value);
-        if (typed.length !== 6) { errorEl.textContent = 'Код состоит из 6 символов'; return; }
+        if (typed.length !== SAS_LEN) { errorEl.textContent = 'Код состоит из ' + SAS_LEN + ' символов'; return; }
         busy = true;
         errorEl.textContent = '';
         try {
@@ -723,7 +726,7 @@
       ktShow(
         'Введите код',
         [
-          h('p', '', 'На другом устройстве появился код из 6 символов. Введите его здесь.'),
+          h('p', '', 'На другом устройстве появился код из 10 символов. Введите его здесь.'),
           input,
           errorEl,
         ],
@@ -822,6 +825,110 @@
     }
     if (chatId === currentChat) renderMessages();
   }
+
+  // ---------- ключи собеседников: предупреждение, если ключ сменился ----------
+  // Первый увиденный ключ друга запоминаем (по отпечатку). Если сервер потом
+  // отдаёт другой ключ, это либо друг создал новый, либо ключ подменили:
+  // отправка ему блокируется, пока человек не подтвердит новый отпечаток.
+  const PEER_FP_KEY = () => 'mm_peer_fp_' + myUsername;
+  const peerChanged = {}; // username -> { oldFp, newFp }
+  const peerPrompted = {}; // username -> newFp, по которому окно уже показывали
+  const peerChecked = {}; // username -> строка ключа, которую уже проверили
+
+  function loadPeerFps() {
+    try {
+      return JSON.parse(localStorage.getItem(PEER_FP_KEY()) || '{}') || {};
+    } catch {
+      return {};
+    }
+  }
+
+  function showPeerChangedPrompt(contact, force) {
+    const info = peerChanged[contact];
+    if (!info) return;
+    if (!force && peerPrompted[contact] === info.newFp) return;
+    if (document.getElementById('kt-overlay')) return; // уже открыто другое окно
+    peerPrompted[contact] = info.newFp;
+
+    ktShow(
+      'У собеседника изменился ключ шифрования',
+      [
+        h('p', '', 'Ключ шифрования пользователя ' + contact + ' изменился. Так бывает, если он создал ' +
+          'новый ключ, но так же выглядит и подмена ключа на сервере. Отправка ему сообщений приостановлена.'),
+        h('p', '', 'Свяжитесь с ним другим способом (звонок, личная встреча) и попросите назвать отпечаток ' +
+          'из Настроек → Шифрование. Если он совпадает с новым, нажмите «Доверять».'),
+        h('p', '', 'Был: ' + info.oldFp),
+        h('p', '', 'Стал: ' + info.newFp),
+      ],
+      [
+        {
+          text: 'Доверять новому ключу',
+          className: 'btn-primary',
+          onClick: () => {
+            const known = loadPeerFps();
+            known[contact] = info.newFp;
+            localStorage.setItem(PEER_FP_KEY(), JSON.stringify(known));
+            delete peerChanged[contact];
+            ktClose();
+          },
+        },
+        { text: 'Закрыть', onClick: ktClose },
+      ]
+    );
+  }
+
+  async function checkPeerKey(contact) {
+    const profile = profilesCache[contact];
+    if (!profile || !profile.publicKey) return;
+    if (peerChecked[contact] === profile.publicKey) return;
+    peerChecked[contact] = profile.publicKey;
+
+    let jwk;
+    try {
+      jwk = JSON.parse(profile.publicKey);
+    } catch {
+      return;
+    }
+    const fp = await fingerprintOf(jwk);
+    const known = loadPeerFps();
+
+    if (!known[contact]) {
+      known[contact] = fp;
+      localStorage.setItem(PEER_FP_KEY(), JSON.stringify(known));
+      delete peerChanged[contact];
+    } else if (known[contact] === fp) {
+      delete peerChanged[contact];
+    } else {
+      peerChanged[contact] = { oldFp: known[contact], newFp: fp };
+      showPeerChangedPrompt(contact, false);
+    }
+  }
+
+  const baseGetSharedKey = window.getSharedKey;
+  if (typeof baseGetSharedKey === 'function') {
+    window.getSharedKey = async function (contact) {
+      const key = await baseGetSharedKey(contact);
+      try {
+        await checkPeerKey(contact);
+      } catch (err) {
+        console.error('Не удалось проверить ключ собеседника', err);
+      }
+      return key;
+    };
+  }
+
+  const baseEncrypt = window.encryptMessage;
+  window.encryptMessage = async function (contact, plaintext) {
+    if (keyState.status === 'ok') {
+      await window.getSharedKey(contact); // заодно проверяет ключ собеседника
+      if (peerChanged[contact]) {
+        showPeerChangedPrompt(contact, true);
+        throw new Error('У собеседника изменился ключ шифрования. Сверьте отпечаток, подтвердите новый ключ ' +
+          'и повторите отправку.');
+      }
+    }
+    return baseEncrypt(contact, plaintext);
+  };
 
   const previousConnectWs = window.connectWs;
   if (typeof previousConnectWs === 'function') {

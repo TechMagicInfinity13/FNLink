@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Notification } = require('electron');
+const { app, BrowserWindow, Menu, Notification, shell, session } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
@@ -153,7 +153,7 @@ function createWindow() {
       // OS-песочница рендерера отключена: на части Linux-систем (AppImage)
       // она ломает создание shared memory, рендерер падает и окно чёрное.
       // Изоляция остаётся за contextIsolation: true и nodeIntegration: false.
-      sandbox: false,
+      sandbox: process.platform !== 'linux', // на Linux (AppImage) остаётся выключенной, см. комментарий выше
     },
   });
  
@@ -173,6 +173,18 @@ function createWindow() {
     console.log('RENDERER:', message);
   });
  
+  // Окно приложения не должно уходить на чужие страницы: ссылки http(s)
+  // открываем в обычном браузере, остальные переходы запрещаем.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  win.webContents.on('will-navigate', (event, url) => {
+    if (url.startsWith('file:')) return; // перезагрузка своей страницы
+    event.preventDefault();
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+  });
+
   win.loadFile(path.join(__dirname, 'index.html'));
  
   // Без системного меню пропадает и шорткат для DevTools — возвращаем вручную.
@@ -186,6 +198,16 @@ function createWindow() {
 }
  
 app.whenReady().then(() => {
+  // Права для страницы: только уведомления и копирование в буфер обмена,
+  // всё остальное (камера, геолокация и т. п.) запрещено.
+  const allowedPermissions = new Set(['notifications', 'clipboard-sanitized-write']);
+  session.defaultSession.setPermissionRequestHandler((wc, permission, callback) => {
+    callback(allowedPermissions.has(permission));
+  });
+  session.defaultSession.setPermissionCheckHandler((wc, permission) =>
+    allowedPermissions.has(permission)
+  );
+
   createWindow();
   integrateWithDesktop(); // копирование идёт в фоне, окно не ждёт
  

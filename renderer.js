@@ -108,6 +108,18 @@ function applyFooterTheme(themeClass, iconContent, username, nameNode) {
 // на 'https://fnlink.duckdns.org' — больше нигде трогать не придётся. ---
 const SERVER_ADDRESS = 'https://fnlink.duckdns.org';
 
+// Аватар приходит с сервера строкой и попадает в CSS: пускаем только обычный
+// растровый data:image, остальное отбрасываем.
+function safeAvatarCss(avatar) {
+  if (typeof avatar !== 'string') return '';
+  if (!/^data:image\/(png|jpeg|jpg|gif|webp);base64,[A-Za-z0-9+/=]+$/.test(avatar)) return '';
+  return 'url("' + avatar + '")';
+}
+
+// Сообщения без шифрования (остались от старых версий) помечаем явно:
+// иначе сервер мог бы подсунуть любой текст "от имени" друга.
+const LEGACY_PLAIN_PREFIX = '⚠️ (не зашифровано) ';
+
 // --- состояние ---
 let serverHttp = null;   // http://host:port
 let serverWs = null;     // ws://host:port
@@ -368,11 +380,11 @@ async function decryptMessage(contactUsername, payload) {
   try {
     parsed = JSON.parse(payload);
   } catch {
-    return payload; // не JSON — считаем старым незашифрованным сообщением
+    return LEGACY_PLAIN_PREFIX + payload; // не JSON — старое незашифрованное сообщение
   }
 
   if (!parsed || parsed.v !== 1 || !parsed.iv || !parsed.ct) {
-    return payload;
+    return LEGACY_PLAIN_PREFIX + payload;
   }
 
   try {
@@ -423,7 +435,7 @@ loginForm.addEventListener('submit', async (e) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),
     });
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || 'Не удалось войти');
 
     serverHttp = server;
@@ -460,7 +472,7 @@ registerForm.addEventListener('submit', async (e) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),
     });
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || 'Не удалось зарегистрироваться');
 
     // после успешной регистрации сразу переключаем на вкладку входа
@@ -512,7 +524,7 @@ function applyFooterAvatar() {
   footerAvatar.classList.remove('hidden');
   const avatar = getAvatar(myUsername);
   if (avatar) {
-    footerAvatar.style.backgroundImage = `url(${avatar})`;
+    footerAvatar.style.backgroundImage = safeAvatarCss(avatar);
     footerAvatar.textContent = '';
   } else {
     footerAvatar.style.backgroundImage = '';
@@ -522,7 +534,7 @@ function applyFooterAvatar() {
 
 function openSettingsModal() {
   const avatar = getAvatar(myUsername);
-  settingsAvatarPreview.style.backgroundImage = avatar ? `url(${avatar})` : '';
+  settingsAvatarPreview.style.backgroundImage = safeAvatarCss(avatar);
   aboutMeInput.value = getAboutMe(myUsername);
   notificationsToggle.checked = localStorage.getItem('mm_notifications') === '1';
   renderFoldersSettingsList();
@@ -539,7 +551,7 @@ function openSettingsModal() {
 
     if (profile.avatar !== undefined) {
       localStorage.setItem(avatarKey(myUsername), profile.avatar);
-      settingsAvatarPreview.style.backgroundImage = profile.avatar ? `url(${profile.avatar})` : '';
+      settingsAvatarPreview.style.backgroundImage = safeAvatarCss(profile.avatar);
       applyFooterAvatar();
     }
     if (profile.about !== undefined) {
@@ -575,7 +587,7 @@ avatarFileInput.addEventListener('change', () => {
   const reader = new FileReader();
   reader.onload = async () => {
     localStorage.setItem(avatarKey(myUsername), reader.result);
-    settingsAvatarPreview.style.backgroundImage = `url(${reader.result})`;
+    settingsAvatarPreview.style.backgroundImage = safeAvatarCss(reader.result);
     applyFooterAvatar();
     try {
       await authFetch('/api/profile', {
@@ -887,7 +899,7 @@ function renderSearchResult(user, status) {
     const avatar = document.createElement('span');
     avatar.className = 'footer-avatar';
     if (user.avatar) {
-      avatar.style.backgroundImage = `url(${user.avatar})`;
+      avatar.style.backgroundImage = safeAvatarCss(user.avatar);
     } else {
       avatar.textContent = user.username ? user.username[0].toUpperCase() : '?';
     }
@@ -1144,7 +1156,7 @@ function renderContactPanel(username) {
     const avatar = document.createElement('span');
     avatar.className = 'contact-panel-avatar';
     if (profile.avatar) {
-      avatar.style.backgroundImage = `url(${profile.avatar})`;
+      avatar.style.backgroundImage = safeAvatarCss(profile.avatar);
     } else {
       avatar.textContent = username ? username[0].toUpperCase() : '?';
     }
@@ -1435,6 +1447,12 @@ function connectWs() {
 
     if (data.type === 'error') {
       console.error('Сервер:', data.message);
+      // токен истёк или недействителен: выходим, чтобы не переподключаться бесконечно
+      if (typeof data.message === 'string' && data.message.startsWith('Неверный токен')) {
+        localStorage.removeItem('mm_token');
+        localStorage.removeItem('mm_username');
+        location.reload();
+      }
     }
   };
 }

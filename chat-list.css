@@ -18,6 +18,9 @@
   gap: 12px;
   width: 100%;
   min-width: 0;
+  /* строка не должна сжиматься, когда список длиннее окна: у плашки
+     overflow: hidden, из-за этого flex считал бы её минимальную высоту нулём */
+  flex-shrink: 0;
   padding: 9px 10px;
   border: none;
   border-radius: 10px;

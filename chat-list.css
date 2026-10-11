@@ -62,11 +62,11 @@
   color: #ffffff;
 }
 
-/* иконка плашки в большом кружке */
-.chat-avatar .bp-icon img {
-  width: 26px;
-  height: 26px;
-  border-radius: 4px;
+/* у пользователя с плашкой вместо кружка только иконка */
+.chat-avatar.chat-avatar-plain {
+  background: none;
+  border-radius: 0;
+  overflow: visible;
 }
 
 /* кружок «в сети» в углу аватарки; рамка того же цвета, что фон строки */
@@ -159,5 +159,58 @@
 }
 
 .chat-item.active .chat-item-preview .you {
+  color: #ffffff;
+}
+
+/* ---------- пользователь с плашкой ----------
+   Вся строка оформлена как карточка внизу слева: подложка плашки, иконка,
+   ник, время и текст поверх неё. Выбранный чат отмечается рамкой. */
+
+.chat-item.bplate {
+  background: var(--bp-bg);
+}
+
+.chat-item.bplate:hover {
+  background: var(--bp-bg);
+  filter: brightness(1.12);
+}
+
+.chat-item.bplate.active {
+  background: var(--bp-bg);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* содержимое поверх светящегося шва плашки */
+.chat-item.bplate > * {
+  position: relative;
+}
+
+.chat-item.bplate .bp-icon {
+  filter: var(--bp-icon-glow, none);
+}
+
+.chat-item.bplate .bp-icon img {
+  width: calc(var(--bp-footer-icon, 22px) + 8px);
+  height: calc(var(--bp-footer-icon, 22px) + 8px);
+  border-radius: 4px;
+}
+
+.chat-item.bplate .chat-avatar-dot {
+  border-color: rgba(0, 0, 0, 0.45);
+}
+
+.chat-item.bplate .chat-item-name.bp-white {
+  color: #ffffff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+.chat-item.bplate .chat-item-time,
+.chat-item.bplate .chat-item-preview {
+  color: rgba(255, 255, 255, 0.82);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+.chat-item.bplate .chat-item-preview .you {
   color: #ffffff;
 }

@@ -51,8 +51,8 @@
     const badge = badgeOf(username); // плашка приходит с сервера, см. renderer.js
 
     if (badge) {
-      avatar.className = 'chat-avatar';
-      applyPlate(avatar, badge);
+      // у пользователя с плашкой вместо кружка только иконка: фон даёт сама строка
+      avatar.className = 'chat-avatar chat-avatar-plain';
       avatar.appendChild(createBadgeIcon(badge));
     } else {
       avatar.className = 'chat-avatar';
@@ -79,6 +79,13 @@
     btn.className = 'chat-item' + (chatId === currentChat ? ' active' : '');
     btn.dataset.chat = chatId;
 
+    // пользователь с плашкой: вся строка оформлена как карточка внизу слева
+    const badge = badgeOf(chatId);
+    if (badge) {
+      btn.classList.add('chat-item-plate');
+      applyPlate(btn, badge);
+    }
+
     btn.appendChild(buildAvatar(chatId));
 
     const body = document.createElement('span');
@@ -89,7 +96,12 @@
 
     const name = document.createElement('span');
     name.className = 'chat-item-name';
-    name.appendChild(createNameNode(label));
+    if (badge) {
+      name.appendChild(nameNodeFor(label, badge, true));
+      if (badge.plateName === 'white') name.classList.add('bp-white');
+    } else {
+      name.appendChild(createNameNode(label));
+    }
 
     const time = document.createElement('span');
     time.className = 'chat-item-time';

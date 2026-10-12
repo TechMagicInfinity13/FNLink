@@ -12,6 +12,8 @@ let badgeDefs = new Map(); // id плашки -> проверенное опре
 const BADGE_COLOR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 const BADGE_ICON_RE = /^data:image\/(?:png|webp|svg\+xml);base64,[A-Za-z0-9+/=]+$/;
 const BADGE_ID_RE = /^[a-z0-9_-]{1,32}$/;
+const BADGE_VIDEO_RE = /^[a-z0-9][a-z0-9._-]{0,63}\.(?:webm|mp4)$/;
+const BADGE_POSTER_RE = /^[a-z0-9][a-z0-9._-]{0,63}\.(?:jpg|jpeg|png|webp)$/;
 
 function bColor(value) {
   return typeof value === 'string' && BADGE_COLOR_RE.test(value) ? value : null;
@@ -50,8 +52,14 @@ function normalizeBadge(raw) {
     name = { type: 'gradient', from: n.from, to: n.to };
   }
 
+  // баннер в панели собеседника: имена файлов на сервере (/badge-assets/<имя>)
+  const bn = raw.banner && typeof raw.banner === 'object' ? raw.banner : null;
+  const bVideo = bn && typeof bn.video === 'string' && BADGE_VIDEO_RE.test(bn.video) ? bn.video : '';
+  const bPoster = bn && typeof bn.poster === 'string' && BADGE_POSTER_RE.test(bn.poster) ? bn.poster : '';
+
   return {
     icon,
+    banner: bVideo || bPoster ? { video: bVideo, poster: bPoster } : null,
     footerIconSize: bNum(raw.footerIconSize, 14, 36, 22),
     angle: bNum(plate.angle, 0, 360, 135),
     stops,
@@ -93,10 +101,14 @@ function badgeOf(username, profile) {
 }
 
 // Оформление плашки задаётся CSS-переменными, сами правила лежат в styles.css
+function plateGradient(badge) {
+  const stops = badge.stops.map(([c, p]) => `${c} ${p}%`).join(', ');
+  return `linear-gradient(${badge.angle}deg, ${stops})`;
+}
+
 function applyPlate(el, badge) {
   el.classList.add('bplate');
-  const stops = badge.stops.map(([c, p]) => `${c} ${p}%`).join(', ');
-  el.style.setProperty('--bp-bg', `linear-gradient(${badge.angle}deg, ${stops})`);
+  el.style.setProperty('--bp-bg', plateGradient(badge));
 
   const shadow = [];
   if (badge.border) shadow.push(`inset 0 0 0 1px ${badge.border}`);
@@ -1176,6 +1188,74 @@ function formatJoinedDate(iso) {
   return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
+// --- баннер сверху в панели собеседника ---
+// У плашки может быть баннер: видео, которое проигрывается один раз при
+// открытии панели и остаётся на последнем кадре, и картинка-заглушка.
+// Файлы лежат на сервере и раздаются по /badge-assets/<имя>.
+let bannerEl = null;
+let bannerKey = null; // какой баннер сейчас показан (ник + файлы)
+
+function bannerUrl(name) {
+  return serverHttp + '/badge-assets/' + encodeURIComponent(name);
+}
+
+function clearBanner() {
+  bannerKey = null;
+  if (bannerEl) bannerEl.innerHTML = ''; // заодно останавливает видео
+}
+
+function renderBanner(username, badge) {
+  const header = contactPanel.querySelector('.contact-panel-header');
+  const banner = badge && badge.banner;
+  if (header) header.classList.toggle('has-banner', !!banner);
+  if (!banner || !header) {
+    clearBanner();
+    return;
+  }
+
+  // панель перерисовывается и от смены статуса «в сети», видео при этом
+  // не должно запускаться заново: перезапуск только при смене контакта или файлов
+  const key = username + '|' + banner.video + '|' + banner.poster;
+  if (bannerKey === key) return;
+  bannerKey = key;
+
+  if (!bannerEl) {
+    bannerEl = document.createElement('div');
+    bannerEl.className = 'contact-panel-banner';
+    header.insertBefore(bannerEl, header.firstChild);
+  }
+  bannerEl.innerHTML = '';
+  bannerEl.style.setProperty('--bp-bg', plateGradient(badge));
+
+  const reduceMotion =
+    typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  if (banner.video && !reduceMotion) {
+    const video = document.createElement('video');
+    video.muted = true;
+    video.defaultMuted = true;
+    video.playsInline = true;
+    video.loop = false;
+    video.preload = 'auto';
+    video.setAttribute('muted', '');
+    video.setAttribute('playsinline', '');
+    if (banner.poster) video.poster = bannerUrl(banner.poster);
+    video.src = bannerUrl(banner.video);
+    bannerEl.appendChild(video);
+    const started = video.play();
+    if (started && typeof started.catch === 'function') {
+      started.catch(() => {
+        /* автозапуск не разрешён: остаётся картинка-заглушка */
+      });
+    }
+  } else if (banner.poster) {
+    const img = document.createElement('img');
+    img.alt = '';
+    img.src = bannerUrl(banner.poster);
+    bannerEl.appendChild(img);
+  }
+}
+
 function renderContactPanel(username) {
   const profile = profilesCache[username] || { username, handle: '', about: '', avatar: '', joinedAt: null };
 
@@ -1199,6 +1279,8 @@ function renderContactPanel(username) {
     }
     contactPanelAvatarWrap.appendChild(avatar);
   }
+
+  renderBanner(username, badgeDef);
 
   contactPanelName.innerHTML = '';
   contactPanelName.appendChild(createNameNode(username));
@@ -1227,6 +1309,7 @@ function updateContactPanelVisibility() {
     contactPanel.classList.remove('hidden');
   } else {
     contactPanel.classList.add('hidden');
+    clearBanner(); // при следующем открытии баннер проиграется снова
   }
 }
 

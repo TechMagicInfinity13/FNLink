@@ -211,6 +211,11 @@
     box-sizing: border-box;
   }
 
+  /* баннер плашки: на всю ширину карточки, без отрицательного отступа сверху */
+  .contact-panel-banner {
+    margin: 8px -16px 0;
+  }
+
   /* окна «Настройки» и «Заявки» на весь экран */
   .modal-overlay {
     padding: 0 !important;

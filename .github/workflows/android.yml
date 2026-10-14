@@ -1,13 +1,14 @@
 name: Android APK
 
 # Запускается вручную: Actions -> Android APK -> Run workflow,
-# в поле tag укажите тег УЖЕ существующего релиза (например v1.2.8).
-# Готовый подписанный APK добавится к этому релизу.
+# в поле tag укажите тег УЖЕ существующего релиза (например v1.4.2).
+# APK собирается из кода ЭТОГО тега и добавляется к этому же релизу.
+# Тег должен содержать папку mobile/ (то есть быть выпущен уже после появления Android-версии).
 on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Тег существующего релиза (например v1.2.8)'
+        description: 'Тег существующего релиза (например v1.4.2)'
         required: true
 
 jobs:
@@ -17,7 +18,19 @@ jobs:
       contents: write   # нужно, чтобы прикрепить файл к релизу
 
     steps:
+      - name: Проверить формат тега
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          if ! [[ "$INPUT_TAG" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Тег должен быть вида v1.2.3, а получен: $INPUT_TAG"
+            exit 1
+          fi
+
+      # Собираем именно из тега, а не из текущего состояния main
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
 
       - uses: actions/setup-node@v4
         with:
@@ -71,6 +84,7 @@ jobs:
             --out "FNLink-${INPUT_TAG}.apk" \
             "$RUNNER_TEMP/aligned.apk"
           "$BT/apksigner" verify --print-certs "FNLink-${INPUT_TAG}.apk"
+          rm -f "$RUNNER_TEMP/fnlink.keystore"
 
       - name: Сохранить APK как артефакт (на случай проблем с релизом)
         uses: actions/upload-artifact@v4
@@ -78,8 +92,9 @@ jobs:
           name: FNLink-apk
           path: FNLink-${{ inputs.tag }}.apk
 
+      # Без сторонних actions: используем GitHub CLI, он уже есть на раннере
       - name: Прикрепить APK к релизу
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ inputs.tag }}
-          files: FNLink-${{ inputs.tag }}.apk
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: gh release upload "$INPUT_TAG" "FNLink-${INPUT_TAG}.apk" --clobber

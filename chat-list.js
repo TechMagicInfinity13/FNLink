@@ -199,7 +199,7 @@
     }
 
     if (last._plain === undefined) {
-      last._plain = await decryptMessage(chatId, last.text);
+      last._plain = await decryptMessage(chatId, last.text, last.from);
     }
 
     // пока расшифровывали, могло прийти более новое сообщение: им займётся свой вызов

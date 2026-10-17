@@ -556,12 +556,12 @@ loginForm.addEventListener('submit', async (e) => {
   }
 });
 
-// --- регистрация ---
+// --- регистрация по коду (школьная система: ников нет, логин это ФИО из списка) ---
 registerForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   registerError.textContent = '';
   const server = SERVER_ADDRESS;
-  const username = document.getElementById('register-username').value.trim();
+  const code = document.getElementById('register-code').value.trim();
   const password = document.getElementById('register-password').value;
   const passwordConfirm = document.getElementById('register-password-confirm').value;
 
@@ -571,18 +571,19 @@ registerForm.addEventListener('submit', async (e) => {
   }
 
   try {
-    const res = await fetch(server + '/api/register', {
+    const res = await fetch(server + '/api/register-code', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ code, password }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || 'Не удалось зарегистрироваться');
 
-    // после успешной регистрации сразу переключаем на вкладку входа
+    // после успешной регистрации переключаем на вкладку входа с готовым логином
     document.querySelector('.tab[data-tab="login"]').click();
-    document.getElementById('login-username').value = username;
-    loginError.textContent = 'Готово, теперь войди с этим паролем';
+    document.getElementById('login-username').value = data.login || '';
+    document.getElementById('register-code').value = '';
+    loginError.textContent = 'Готово! Ваш логин: «' + (data.login || '') + '». Войдите с этим паролем';
   } catch (err) {
     registerError.textContent = err.message;
   }
@@ -1542,7 +1543,7 @@ async function notifyIncomingMessage(contactUsername, message) {
   if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
   if (document.hasFocus()) return;
 
-  const plain = await decryptMessage(contactUsername, message.text);
+  const plain = await decryptMessage(contactUsername, message.text, message.from);
   new Notification(message.from, { body: plain });
 }
 
@@ -1607,7 +1608,7 @@ async function renderMessages() {
   await Promise.all(
     list.map(async (msg) => {
       if (msg._plain === undefined) {
-        msg._plain = await decryptMessage(currentChat, msg.text);
+        msg._plain = await decryptMessage(currentChat, msg.text, msg.from);
       }
     })
   );

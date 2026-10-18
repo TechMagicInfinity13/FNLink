@@ -1284,3 +1284,43 @@ html, body {
   outline: none;
   border-color: var(--accent-dim);
 }
+
+/* Регистрация: плашки «Классический / Образовательный» сверху, как вкладки в браузере */
+.reg-mode-tabs {
+  display: flex;
+  gap: 4px;
+  margin: -6px 0 2px;
+  border-bottom: 1px solid var(--border);
+}
+
+.reg-mode-tab {
+  flex: 1;
+  position: relative;
+  top: 1px;
+  padding: 9px 8px 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 10px 10px 0 0;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.reg-mode-tab:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.reg-mode-tab.active {
+  background: var(--bg-2);
+  border-color: var(--border);
+  border-top: 2px solid var(--accent);
+  color: var(--text);
+}
+
+.reg-mode-hint {
+  min-height: 16px;
+  font-size: 12px;
+  color: var(--text-dim);
+}

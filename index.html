@@ -36,8 +36,16 @@
     </form>
 
     <form id="register-form" class="auth-form hidden">
-      <label>Код регистрации
-        <input type="text" id="register-code" placeholder="XXXX-XXXX-XXXX" autocomplete="off" required />
+      <div class="reg-mode-tabs" role="tablist">
+        <button type="button" class="reg-mode-tab active" data-mode="classic" role="tab">Классический</button>
+        <button type="button" class="reg-mode-tab" data-mode="edu" role="tab">Образовательный</button>
+      </div>
+      <div class="reg-mode-hint" id="register-mode-hint"></div>
+      <label id="register-nick-label">Ник
+        <input type="text" id="register-username" placeholder="Придумай ник" autocomplete="off" required />
+      </label>
+      <label id="register-code-label" class="hidden">Код регистрации
+        <input type="text" id="register-code" placeholder="XXXX-XXXX-XXXX" autocomplete="off" />
       </label>
       <label>Пароль
         <input type="password" id="register-password" placeholder="Минимум 6 символов" required />

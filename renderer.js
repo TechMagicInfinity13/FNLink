@@ -556,12 +556,45 @@ loginForm.addEventListener('submit', async (e) => {
   }
 });
 
-// --- регистрация по коду (школьная система: ников нет, логин это ФИО из списка) ---
+// --- регистрация: «Классический» (ник и пароль) или «Образовательный» (код из школы) ---
+let registerMode = 'classic';
+try {
+  if (localStorage.getItem('mm_reg_mode') === 'edu') registerMode = 'edu';
+} catch {
+  /* не страшно */
+}
+
+function applyRegisterMode() {
+  const edu = registerMode === 'edu';
+  document.querySelectorAll('.reg-mode-tab').forEach((t) => t.classList.toggle('active', t.dataset.mode === registerMode));
+  document.getElementById('register-nick-label').classList.toggle('hidden', edu);
+  document.getElementById('register-code-label').classList.toggle('hidden', !edu);
+  document.getElementById('register-username').required = !edu;
+  document.getElementById('register-code').required = edu;
+  document.getElementById('register-mode-hint').textContent = edu
+    ? 'Для учеников и учителей школы. Код выдаёт школа, логином станет ваше ФИО.'
+    : 'Обычный аккаунт: придумайте ник и пароль.';
+  registerError.textContent = '';
+}
+
+document.querySelectorAll('.reg-mode-tab').forEach((tab) => {
+  tab.addEventListener('click', () => {
+    registerMode = tab.dataset.mode === 'edu' ? 'edu' : 'classic';
+    try {
+      localStorage.setItem('mm_reg_mode', registerMode);
+    } catch {
+      /* не страшно */
+    }
+    applyRegisterMode();
+  });
+});
+applyRegisterMode();
+
 registerForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   registerError.textContent = '';
   const server = SERVER_ADDRESS;
-  const code = document.getElementById('register-code').value.trim();
+  const edu = registerMode === 'edu';
   const password = document.getElementById('register-password').value;
   const passwordConfirm = document.getElementById('register-password-confirm').value;
 
@@ -571,19 +604,38 @@ registerForm.addEventListener('submit', async (e) => {
   }
 
   try {
-    const res = await fetch(server + '/api/register-code', {
+    let url;
+    let body;
+    if (edu) {
+      const code = document.getElementById('register-code').value.trim();
+      if (!code) throw new Error('Введите код регистрации');
+      url = '/api/register-code';
+      body = { code, password };
+    } else {
+      const username = document.getElementById('register-username').value.trim();
+      if (!username) throw new Error('Введите ник');
+      url = '/api/register';
+      body = { username, password };
+    }
+
+    const res = await fetch(server + url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code, password }),
+      body: JSON.stringify(body),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || 'Не удалось зарегистрироваться');
 
     // после успешной регистрации переключаем на вкладку входа с готовым логином
+    const login = edu ? data.login || '' : body.username;
     document.querySelector('.tab[data-tab="login"]').click();
-    document.getElementById('login-username').value = data.login || '';
+    document.getElementById('login-username').value = login;
     document.getElementById('register-code').value = '';
-    loginError.textContent = 'Готово! Ваш логин: «' + (data.login || '') + '». Войдите с этим паролем';
+    document.getElementById('register-password').value = '';
+    document.getElementById('register-password-confirm').value = '';
+    loginError.textContent = edu
+      ? 'Готово! Ваш логин: «' + login + '». Войдите с этим паролем'
+      : 'Готово! Теперь войдите под ником «' + login + '»';
   } catch (err) {
     registerError.textContent = err.message;
   }

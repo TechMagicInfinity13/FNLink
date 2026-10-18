@@ -13,6 +13,23 @@ const { execFile } = require('child_process');
 if (process.platform === 'linux') {
   app.commandLine.appendSwitch('no-sandbox');
 }
+
+// Один экземпляр на профиль. Второй запущенный экземпляр с тем же профилем не может
+// записывать данные (localStorage), поэтому в нём пропадали вход и ключ шифрования.
+// Для проверки двух аккаунтов одновременно запускайте второй экземпляр с отдельным
+// профилем: --user-data-dir=/путь/к/другой/папке
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    const existing = BrowserWindow.getAllWindows()[0];
+    if (existing) {
+      if (existing.isMinimized()) existing.restore();
+      existing.focus();
+    }
+  });
+}
  
 // --- установка в постоянное место + ярлык (только AppImage на Linux) ---
 // При первом запуске AppImage копирует себя в ~/.local/share/fnlink/
@@ -198,6 +215,7 @@ function createWindow() {
 }
  
 app.whenReady().then(() => {
+  if (!gotSingleInstanceLock) return; // это лишний экземпляр, он закрывается
   // Права для страницы: только уведомления и копирование в буфер обмена,
   // всё остальное (камера, геолокация и т. п.) запрещено.
   const allowedPermissions = new Set(['notifications', 'clipboard-sanitized-write']);
@@ -223,6 +241,28 @@ app.whenReady().then(() => {
   });
 });
  
+// Вход и ключ шифрования лежат в localStorage. Chromium пишет его на диск с задержкой и
+// может потерять записи, если приложение закрыли сразу после входа. Поэтому сбрасываем
+// данные на диск каждые 5 секунд и перед выходом.
+function flushStorage() {
+  try {
+    require('electron').session.defaultSession.flushStorageData();
+  } catch (err) {
+    console.error('flushStorageData:', err.message);
+  }
+}
+app.whenReady().then(() => {
+  setInterval(flushStorage, 5000);
+});
+let quitFlushed = false;
+app.on('before-quit', (event) => {
+  if (quitFlushed) return;
+  quitFlushed = true;
+  event.preventDefault(); // даём сбросу на диск закончиться и выходим заново
+  flushStorage();
+  setTimeout(() => app.quit(), 500);
+});
+
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });

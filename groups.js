@@ -47,20 +47,32 @@
     }
   }
 
-  const baseLoadContacts = window.loadContacts;
-  window.loadContacts = async function () {
-    await baseLoadContacts();
-    await loadGroups();
-    // группы идут в списке первыми, дальше люди
+  let groupsLoaded = false;
+
+  // группы идут в списке первыми, дальше люди
+  function mergeGroupContacts() {
+    if (!groups.length) return;
     contacts = [...groups.map((g) => g.name), ...contacts.filter((c) => !byName.has(c))];
     applyGroupProfiles();
     renderChatList();
+  }
+
+  const baseLoadContacts = window.loadContacts;
+  window.loadContacts = async function () {
+    await baseLoadContacts();
+    groupsLoaded = (await loadGroups()) || groupsLoaded;
+    mergeGroupContacts();
   };
 
+  // При автовходе renderer.js вызывает loadContacts() ещё ДО того, как этот файл загрузился
+  // (tryAutoLogin стоит в конце renderer.js), и подмена его не затрагивает. Поэтому группы
+  // добавляем и здесь: refreshProfilesCache() вызывается позже, когда подмена уже есть.
   const baseRefreshProfiles = window.refreshProfilesCache;
   window.refreshProfilesCache = async function () {
-    await baseRefreshProfiles();
-    applyGroupProfiles(); // базовая функция заменяет весь кэш профилей
+    await baseRefreshProfiles(); // базовая функция заменяет весь кэш профилей
+    if (!groupsLoaded) groupsLoaded = await loadGroups();
+    applyGroupProfiles();
+    mergeGroupContacts();
   };
 
   // состав группы или чьи-то ключи изменились: перечитываем (с паузой, чтобы не частить)

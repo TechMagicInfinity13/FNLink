@@ -1489,9 +1489,11 @@ function switchChat(chatId, label) {
 // --- WebSocket ---
 function connectWs() {
   setStatus(false, 'подключение...');
-  ws = new WebSocket(`${serverWs}/ws?token=${encodeURIComponent(token)}`);
+  // токен первым сообщением, а не в адресе: адрес попадает в логи nginx
+  ws = new WebSocket(`${serverWs}/ws`);
 
   ws.onopen = () => {
+    ws.send(JSON.stringify({ type: 'auth', token }));
     setStatus(true, 'онлайн');
     if (currentChat) {
       ws.send(JSON.stringify({ type: 'history', chat: currentChat }));

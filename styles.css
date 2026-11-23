@@ -1324,3 +1324,28 @@ html, body {
   font-size: 12px;
   color: var(--text-dim);
 }
+
+/* всплывающее сообщение об ошибке (ошибки сервера, например «Слишком часто») */
+#toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  transform: translate(-50%, 20px);
+  max-width: min(92vw, 420px);
+  padding: 10px 16px;
+  border-radius: 10px;
+  background: #3a1f24;
+  color: #ffd9d9;
+  border: 1px solid rgba(255, 120, 120, 0.5);
+  font-size: 14px;
+  line-height: 1.35;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s, transform 0.2s;
+  z-index: 10000;
+}
+#toast.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}

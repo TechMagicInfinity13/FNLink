@@ -1574,6 +1574,14 @@ function connectWs() {
 
     if (data.type === 'error') {
       console.error('Сервер:', data.message);
+      if (!isQuietServerError(data.message) && !(typeof data.message === 'string' && data.message.startsWith('Неверный токен'))) {
+        showToast(data.message);
+        // сообщение не ушло: возвращаем текст в поле, если там ещё ничего не набрано
+        if (lastSent && Date.now() - lastSent.at < 4000 && lastSent.chat === currentChat && !messageInput.value) {
+          messageInput.value = lastSent.text;
+        }
+        lastSent = null;
+      }
       // токен истёк или недействителен: выходим, чтобы не переподключаться бесконечно
       if (typeof data.message === 'string' && data.message.startsWith('Неверный токен')) {
         localStorage.removeItem('mm_token');
@@ -1583,6 +1591,34 @@ function connectWs() {
     }
   };
 }
+
+// Сообщения об ошибках сервера (раньше уходили только в консоль, и человек не понимал,
+// почему сообщение не отправилось).
+let toastTimer = null;
+let lastToast = { text: '', at: 0 };
+function showToast(text) {
+  const now = Date.now();
+  if (text === lastToast.text && now - lastToast.at < 3000) return; // не частить одним и тем же
+  lastToast = { text, at: now };
+  let el = document.getElementById('toast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'toast';
+    el.setAttribute('role', 'status');
+    document.body.appendChild(el);
+  }
+  el.textContent = text;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 5000);
+}
+
+// Ошибки ответов на запросы истории (их шлёт список чатов в фоне) человеку не показываем
+function isQuietServerError(message) {
+  return typeof message === 'string' && (message.startsWith('Слишком много запросов') || message.startsWith('Переписка доступна только'));
+}
+
+let lastSent = null; // { chat, text, at }: последнее отправленное, чтобы вернуть текст при ошибке
 
 function setStatus(online, text) {
   statusDot.classList.toggle('online', online);
@@ -1702,6 +1738,7 @@ sendForm.addEventListener('submit', async (e) => {
 
   try {
     const encrypted = await encryptMessage(currentChat, text);
+    lastSent = { chat: currentChat, text, at: Date.now() };
     ws.send(JSON.stringify({ type: 'send', chat: currentChat, text: encrypted }));
   } catch (err) {
     messageInput.value = text; // вернуть текст обратно в поле, раз не ушло

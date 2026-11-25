@@ -153,6 +153,56 @@
     return { pub: obj.pub, priv: obj.priv };
   }
 
+  // ---------- резервная копия ключа по коду восстановления ----------
+  // Код придумывает приложение (20 знаков, около 100 бит), человек сохраняет его сам.
+  // Ключ шифруется этим кодом на устройстве (формат FNKEY1, как у экспорта) и уходит
+  // на сервер как непрозрачный набор байт: без кода его не прочитать ни серверу, ни
+  // тому, кто получит доступ к данным сервера.
+
+  const RECOVERY_LEN = 20;
+  const RECOVERY_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // 32 знака без I, O, 0, 1
+
+  function generateRecoveryCode() {
+    const bytes = crypto.getRandomValues(new Uint8Array(RECOVERY_LEN));
+    return Array.from(bytes, (b) => RECOVERY_ALPHABET[b & 31]).join(''); // 256 делится на 32: без перекоса
+  }
+
+  function formatRecovery(code) {
+    return code.match(/.{5}/g).join('-');
+  }
+
+  function normalizeRecovery(text) {
+    return String(text || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  }
+
+  function isValidRecovery(code) {
+    return code.length === RECOVERY_LEN && Array.from(code).every((c) => RECOVERY_ALPHABET.includes(c));
+  }
+
+  async function buildBackup(code) {
+    const local = await loadLocalPair();
+    if (!local) throw new Error('На этом устройстве нет ключа');
+    return { blob: await exportKeyString(code), fp: await fingerprintOf(local.pub) };
+  }
+
+  async function openBackup(blob, code) {
+    try {
+      return await importKeyString(blob, code);
+    } catch (err) {
+      if (/Неверный пароль/.test(err.message)) throw new Error('Код не подходит. Проверьте, нет ли опечаток.');
+      throw err;
+    }
+  }
+
+  const fetchBackupStatus = () => authFetch('/api/key-backup');
+  const uploadBackup = (blob, fp) =>
+    authFetch('/api/key-backup', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ blob, fp }),
+    });
+  const deleteBackup = () => authFetch('/api/key-backup', { method: 'DELETE' });
+
   // ---------- перенос ключа по коду (криптография) ----------
   // Старое устройство шифрует ключ под временным ECDH-секретом с новым
   // устройством; сервер видит только шифротекст.
@@ -255,6 +305,7 @@
     if (local) myKeyPair = local.pair; // старые сообщения этим ключом читаются
 
     let status;
+    let freshKey = false; // ключ создан прямо сейчас: сразу предложим резервную копию
     if (!server.ok) {
       status = local ? 'ok' : 'error';
     } else if (local) {
@@ -277,6 +328,7 @@
       try { await publishPub(fresh.pub); } catch (err) { console.error('Не удалось опубликовать ключ', err); }
       local = fresh;
       status = 'ok';
+      freshKey = true;
     } else {
       status = 'missing';
     }
@@ -290,6 +342,8 @@
       refreshUi();
       // новое устройство: сразу предлагаем подтвердить вход на другом
       if (isStartup && status === 'missing') startTransferFlow();
+      if (status !== 'error') refreshBackupStatus();
+      if (freshKey) setTimeout(() => startBackupFlow(true), 800);
     }
   }
 
@@ -414,7 +468,7 @@
       'или сделайте ключ этого устройства основным.',
     missing:
       '⚠️ У аккаунта уже есть ключ, но он на другом устройстве. Нажмите «Подтвердить вход на ' +
-      'другом устройстве» (проще всего) или импортируйте ключ вручную.',
+      'другом устройстве» (проще всего), восстановите ключ по коду восстановления или импортируйте его вручную.',
     error: 'Не удалось проверить ключ на сервере. Проверьте связь и перезапустите приложение.',
   };
 
@@ -433,6 +487,7 @@
       st === 'missing'
         ? 'На этом устройстве нет ключа шифрования: сообщения не читаются и не отправляются.'
         : 'Ключ шифрования этого устройства не совпадает с ключом аккаунта: отправка отключена.';
+    refreshBackupUi();
   }
 
   settingsBtn.addEventListener('click', () => {
@@ -495,7 +550,8 @@
   createBtn.addEventListener('click', async () => {
     setMsg('');
     if (!confirm('Будет создан новый ключ. Прежняя переписка станет нечитаемой на всех устройствах, ' +
-      'пока вы не вернёте старый ключ. Продолжить?')) return;
+      'пока вы не вернёте старый ключ. Если у вас есть код восстановления, нажмите «Отмена» и ' +
+      'используйте «Восстановить по коду». Продолжить?')) return;
     try {
       const fresh = await generateNewKey();
       storeLocal(fresh.pub, fresh.priv);
@@ -628,6 +684,10 @@
         ],
         [
           { text: 'Отмена', onClick: () => { cancelOwnTransfer(run); ktClose(); } },
+          {
+            text: 'Восстановить по коду',
+            onClick: () => { cancelOwnTransfer(run); ktClose(); startRestoreFlow(); },
+          },
           {
             text: 'У меня нет другого устройства',
             className: 'btn-text',
@@ -825,6 +885,296 @@
     }
     if (chatId === currentChat) renderMessages();
   }
+
+  // ---------- резервная копия ключа: экраны ----------
+
+  const bkStyle = document.createElement('style');
+  bkStyle.textContent =
+    '#backup-banner{margin:8px 8px 0;padding:8px 10px;border-radius:8px;font-size:12px;line-height:1.4;' +
+    'background:rgba(59,130,246,.14);border:1px solid rgba(59,130,246,.5);color:var(--text)}' +
+    '#backup-banner .bk-row{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}' +
+    '#kt-card .kt-reccode{margin:6px 0 14px;text-align:center;font-family:var(--font-mono);font-size:22px;' +
+    'font-weight:700;letter-spacing:3px;line-height:1.6;color:var(--accent);user-select:all}' +
+    '#kt-card input.kt-rec{font-size:16px;letter-spacing:2px}' +
+    '#e2e-backup{margin-top:14px;padding-top:12px;border-top:1px solid var(--border)}';
+  document.head.appendChild(bkStyle);
+
+  let backupInfo = null; // { exists, current, updatedAt }; null, пока не узнали
+  let backupDismissed = false; // «напомнить позже» действует до перезапуска приложения
+  let backupFlowOpen = false;
+
+  const mkButton = (text, className) => {
+    const b = h('button', className || 'btn-secondary', text);
+    b.type = 'button';
+    return b;
+  };
+
+  // напоминание в боковой колонке
+  const backupBanner = h('div');
+  backupBanner.id = 'backup-banner';
+  backupBanner.className = 'hidden';
+  const backupBannerText = h('span');
+  const bannerRow = h('div', 'bk-row');
+  const backupBannerBtn = mkButton('Создать код восстановления');
+  const backupBannerLater = mkButton('Позже', 'btn-text');
+  bannerRow.appendChild(backupBannerBtn);
+  bannerRow.appendChild(backupBannerLater);
+  backupBanner.appendChild(backupBannerText);
+  backupBanner.appendChild(bannerRow);
+  if (sidebar && search) sidebar.insertBefore(backupBanner, search);
+  backupBannerBtn.addEventListener('click', () => startBackupFlow(false));
+  backupBannerLater.addEventListener('click', () => { backupDismissed = true; refreshBackupUi(); });
+
+  // блок в Настройках → Шифрование
+  const bkBlock = h('div');
+  bkBlock.id = 'e2e-backup';
+  const bkTitle = h('p', 'settings-hint');
+  bkTitle.appendChild(h('b', '', 'Резервная копия ключа'));
+  const bkStatusEl = h('p', 'settings-hint');
+  const bkHint = h('p', 'settings-hint',
+    'Код восстановления нужен, если вы потеряете все устройства или переустановите приложение: ' +
+    'по нему ключ вернётся, и переписка снова откроется. Мы не можем восстановить сам код.');
+  const bkButtons = h('div', 'e2e-row');
+  const bkCreateBtn = mkButton('Создать код восстановления');
+  const bkRestoreBtn = mkButton('Восстановить по коду', 'btn-secondary hidden');
+  const bkDeleteBtn = mkButton('Удалить резервную копию', 'btn-text hidden');
+  [bkCreateBtn, bkRestoreBtn, bkDeleteBtn].forEach((b) => bkButtons.appendChild(b));
+  [bkTitle, bkStatusEl, bkHint, bkButtons].forEach((n) => bkBlock.appendChild(n));
+  if (msgEl && msgEl.parentNode) msgEl.parentNode.insertBefore(bkBlock, msgEl);
+
+  function refreshBackupUi() {
+    const info = backupInfo;
+    const st = keyState.status;
+    const canBackup = st === 'ok' && keyState.hasLocal;
+    const stale = !!info && info.exists && !info.current;
+    const none = !!info && !info.exists;
+
+    const needs = canBackup && (stale || none) && !backupDismissed;
+    backupBanner.classList.toggle('hidden', !needs);
+    if (needs) {
+      backupBannerText.textContent = stale
+        ? 'Резервная копия относится к прежнему ключу и уже не поможет. Создайте новый код восстановления.'
+        : 'Резервной копии ключа нет. Если потерять устройство, переписка пропадёт навсегда.';
+    }
+
+    bkCreateBtn.classList.toggle('hidden', !canBackup);
+    bkCreateBtn.textContent = info && info.exists ? 'Создать новый код восстановления' : 'Создать код восстановления';
+    bkRestoreBtn.classList.toggle('hidden', !(st === 'missing' || st === 'mismatch'));
+    bkDeleteBtn.classList.toggle('hidden', !(info && info.exists));
+
+    let text = '';
+    if (info) {
+      if (!info.exists) text = 'Резервной копии нет.';
+      else if (!info.current) text = 'Копия относится к прежнему ключу и уже не поможет: создайте новую.';
+      else {
+        text = 'Копия создана' + (info.updatedAt ? ' ' + new Date(info.updatedAt).toLocaleString('ru-RU') : '') +
+          '. Код восстановления есть только у вас.';
+      }
+    }
+    bkStatusEl.textContent = text;
+  }
+
+  async function refreshBackupStatus() {
+    try {
+      backupInfo = await fetchBackupStatus();
+    } catch (err) {
+      return; // нет связи или старый сервер без этих запросов: просто ничего не показываем
+    }
+    refreshBackupUi();
+  }
+
+  // создание копии: показать код, проверить, что его сохранили, зашифровать и отправить
+  function startBackupFlow(first) {
+    if (backupFlowOpen) return;
+    if (!(keyState.status === 'ok' && keyState.hasLocal)) return;
+    backupFlowOpen = true;
+    settingsModal.classList.add('hidden');
+
+    const code = generateRecoveryCode();
+    const shown = formatRecovery(code);
+    const close = () => { backupFlowOpen = false; ktClose(); };
+
+    const showCode = () => {
+      const box = h('div', 'kt-reccode');
+      box.appendChild(h('div', '', shown.slice(0, 11)));
+      box.appendChild(h('div', '', shown.slice(12)));
+      ktShow(
+        first ? 'Сохраните код восстановления' : 'Код восстановления',
+        [
+          h('p', '', (first ? 'Ваш ключ шифрования создан. ' : '') +
+            'Этот код единственный способ вернуть переписку, если вы потеряете телефон или переустановите ' +
+            'приложение. Запишите его на бумаге или сохраните в надёжном месте. Он показывается один раз, ' +
+            'мы не можем его восстановить.'),
+          box,
+          h('p', '', 'Никому не показывайте код и не отправляйте его в чатах.'),
+        ],
+        [
+          {
+            text: 'Скопировать',
+            onClick: async (e) => {
+              const btn = e.currentTarget;
+              try { await navigator.clipboard.writeText(shown); btn.textContent = 'Скопировано'; }
+              catch { btn.textContent = 'Скопируйте вручную'; }
+            },
+          },
+          { text: 'Я сохранил код', className: 'btn-primary', onClick: showCheck },
+          { text: 'Позже', className: 'btn-text', onClick: close },
+        ]
+      );
+    };
+
+    const showCheck = () => {
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.maxLength = 8;
+      input.autocomplete = 'off';
+      input.setAttribute('autocapitalize', 'characters');
+      input.placeholder = 'XXXX';
+      const errorEl = h('div', 'kt-error');
+      let busy = false;
+
+      const submit = async () => {
+        if (busy) return;
+        if (normalizeRecovery(input.value) !== code.slice(-4)) {
+          errorEl.textContent = 'Последние 4 знака не совпадают. Проверьте, как вы записали код.';
+          return;
+        }
+        busy = true;
+        errorEl.textContent = 'Шифруем и сохраняем…';
+        try {
+          const { blob, fp } = await buildBackup(code);
+          // убеждаемся, что копия открывается этим кодом и содержит именно наш ключ
+          const check = await openBackup(blob, code);
+          const local = await loadLocalPair();
+          if (!local || !sameKey(check.pub, local.pub)) throw new Error('Проверка копии не прошла, попробуйте ещё раз');
+          const res = await uploadBackup(blob, fp);
+          backupInfo = { exists: true, current: true, updatedAt: res.updatedAt || new Date().toISOString() };
+          refreshBackupUi();
+          ktShow(
+            'Готово',
+            [h('p', '', 'Резервная копия сохранена. Код хранится только у вас: сохраните его надёжно.')],
+            [{ text: 'Закрыть', className: 'btn-primary', onClick: close }]
+          );
+        } catch (err) {
+          errorEl.textContent = err.message;
+          busy = false;
+        }
+      };
+
+      ktShow(
+        'Проверка',
+        [h('p', '', 'Чтобы убедиться, что код сохранён, введите его последние 4 знака.'), input, errorEl],
+        [
+          { text: 'Сохранить копию', className: 'btn-primary', onClick: submit },
+          { text: 'Назад', onClick: showCode },
+          { text: 'Отмена', className: 'btn-text', onClick: close },
+        ]
+      );
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+      input.focus();
+    };
+
+    showCode();
+  }
+
+  // восстановление ключа на новом устройстве по коду
+  async function startRestoreFlow() {
+    if (backupFlowOpen) return;
+    backupFlowOpen = true;
+    settingsModal.classList.add('hidden');
+    const close = () => { backupFlowOpen = false; ktClose(); };
+    const closeBtn = { text: 'Закрыть', onClick: close };
+    const otherWays = {
+      text: 'Другие способы',
+      className: 'btn-text',
+      onClick: () => { close(); settingsBtn.click(); },
+    };
+
+    ktShow('Восстановление по коду', [h('p', '', 'Проверяем резервную копию…')], []);
+    let data;
+    let server;
+    try {
+      const info = await fetchBackupStatus();
+      if (!info.exists) {
+        return ktShow('Резервной копии нет',
+          [h('p', '', 'Для этого аккаунта код восстановления не создавался. Остаётся перенос с другого ' +
+            'устройства или импорт ключа. Если ничего этого нет, можно создать новый ключ, но прежняя ' +
+            'переписка при этом не откроется.')],
+          [closeBtn, otherWays]);
+      }
+      if (!info.current) {
+        return ktShow('Копия устарела',
+          [h('p', '', 'Резервная копия относится к прежнему ключу аккаунта и не поможет прочитать нынешнюю переписку.')],
+          [closeBtn, otherWays]);
+      }
+      data = await authFetch('/api/key-backup/blob');
+      server = await fetchServerKey();
+      if (!server.ok || !server.key) throw new Error('Не удалось проверить ключ аккаунта. Проверьте связь.');
+    } catch (err) {
+      return ktShow('Не удалось восстановить', [h('p', '', err.message)], [closeBtn, otherWays]);
+    }
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'kt-rec';
+    input.maxLength = 30;
+    input.autocomplete = 'off';
+    input.setAttribute('autocapitalize', 'characters');
+    input.placeholder = 'XXXXX-XXXXX-XXXXX-XXXXX';
+    const errorEl = h('div', 'kt-error');
+    let busy = false;
+
+    const submit = async () => {
+      if (busy) return;
+      const code = normalizeRecovery(input.value);
+      if (!isValidRecovery(code)) {
+        errorEl.textContent = 'Код состоит из 20 знаков: буквы A–Z (без I и O) и цифры 2–9.';
+        return;
+      }
+      busy = true;
+      errorEl.textContent = 'Проверяем код…';
+      try {
+        const obj = await openBackup(data.blob, code);
+        if (!sameKey(server.key, obj.pub)) {
+          throw new Error('Копия относится к другому ключу, чем тот, что сейчас у аккаунта.');
+        }
+        storeLocal(obj.pub, obj.priv);
+        ktShow('Готово', [h('p', '', 'Ключ восстановлен. Перезапускаем приложение…')], []);
+        setTimeout(() => location.reload(), 600);
+      } catch (err) {
+        errorEl.textContent = err.message;
+        busy = false;
+      }
+    };
+
+    ktShow(
+      'Введите код восстановления',
+      [h('p', '', 'Введите 20 знаков, которые вы сохранили при создании резервной копии. ' +
+        'Дефисы и регистр не важны.'), input, errorEl],
+      [
+        { text: 'Восстановить', className: 'btn-primary', onClick: submit },
+        { text: 'Отмена', onClick: close },
+        otherWays,
+      ]
+    );
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+    input.focus();
+  }
+
+  bkCreateBtn.addEventListener('click', () => startBackupFlow(false));
+  bkRestoreBtn.addEventListener('click', () => startRestoreFlow());
+  bkDeleteBtn.addEventListener('click', async () => {
+    if (!confirm('Удалить резервную копию? Без неё при потере устройства переписку вернуть не получится.')) return;
+    try {
+      await deleteBackup();
+      backupInfo = { exists: false, current: false, updatedAt: null };
+      backupDismissed = false;
+      refreshBackupUi();
+      setMsg('Резервная копия удалена.', false);
+    } catch (err) {
+      setMsg(err.message);
+    }
+  });
 
   // ---------- ключи собеседников: предупреждение, если ключ сменился ----------
   // Первый увиденный ключ друга запоминаем (по отпечатку). Если сервер потом
